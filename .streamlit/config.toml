@@ -1,0 +1,15 @@
+[server]
+# 0.0.0.0 = other office PCs can open it at http://<this PC's name>:8501
+address = "0.0.0.0"
+port = 8501
+headless = true
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#1F5FAD"
+
+[client]
+# hide the "Deploy" button
+toolbarMode = "minimal"

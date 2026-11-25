@@ -1,0 +1,7 @@
+{
+  "_how_to": "Filled in automatically. Key = destination/where-applied (e.g. nld/egy = Netherlands visa applied in Egypt, cze/are = Czech visa applied in the UAE). The program finds missing ones itself; you only need to edit this if VFS changes a link.",
+  "nld/egy": "https://visatracking.vfsglobal.com/Global-Passporttracking/Track/Index?q=shSA0YnE4pLF9Xzwon/x/GAZMwphNakm2hstnNbT9MeLtMSNCgJ8GiT50RSS4w+IoAskZVw2rQ7iiIFWAOR5nn/9PaBLCKizDwQv/VEFdKwd30xtr0ZpFRWICbwYGvbB",
+  "cze/are": "https://visatracking.vfsglobal.com/Global-Passporttracking/Track/Index?q=shSA0YnE4pLF9Xzwon/x/Jdf3aByYnqcjO/DruY4vPZfAMLbwkob13WiEvth/SSJfQ80KIaOztETUA08burPeRZpp9Q5MmMLrgiRuXoaXX5ea2a48W4mVOYQCnsCIJ25",
+  "swe/egy": "https://www.vfsvisaonline.com/Global-Passporttracking/Track/Index?q=shSA0YnE4pLF9Xzwon/x/A9+3ayKh2o6XUmXfdhngCY/eSmMO64SVPN72kK1ToIaoTppsYRcL4V1vUvOILR1MA==",
+  "fra/sau": "https://visatracking.vfsglobal.com/Global-Passporttracking/Track/Index?q=shSA0YnE4pLF9Xzwon/x/APnFmGO26yoncx/v5lsUb/wVhluA+MrsaR4qhJ36RK64t93rN3wkaLxikMo7+wlj2eXlxuSPmKulFHn3+USLqMIWzv5LxbWUBCMlIAya4FK"
+}

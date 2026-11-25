@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+results/
+*.xlsx
+tls_password.txt
+data/
+.streamlit/secrets.toml
