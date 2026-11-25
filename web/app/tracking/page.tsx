@@ -152,7 +152,13 @@ function JobPanel({ job, onAct }: { job: Job; onAct: (a: "done" | "cancel") => v
       </div>
 
       {job.state === "queued" && <p className="muted">Waiting for the office PC to start…</p>}
-      {job.state === "running" && <p className="muted">Working… this page updates by itself.</p>}
+      {job.state === "running" && (
+        <p className="muted">
+          Working… this page updates by itself. “Needs you in the browser” in the details usually
+          just means a site is slow — act on the office PC only if a window there asks for an OTP
+          or a security question.
+        </p>
+      )}
       {job.state === "waiting" && (
         <div className="callout">
           <strong>Your turn: CAPTCHAs</strong>

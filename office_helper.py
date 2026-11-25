@@ -94,8 +94,19 @@ class Run:
                 pass
 
     def _flusher(self) -> None:
+        """Send new progress lines every 2 s, and a heartbeat at least every 10 s
+        so the website keeps showing the helper as online during long runs."""
+        quiet = 0
         while not self._stop.wait(2):
+            had_lines = bool(self._lines)
             self._flush()
+            quiet = 0 if had_lines else quiet + 2
+            if quiet >= 10:
+                try:
+                    self.report()
+                except Exception:
+                    pass
+                quiet = 0
 
     def confirm(self, windows: int) -> None:
         """Instead of typing yes: wait for the website button."""

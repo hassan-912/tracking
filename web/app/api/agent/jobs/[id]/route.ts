@@ -16,6 +16,8 @@ export async function POST(request: Request, ctx: RouteContext<"/api/agent/jobs/
   const id = Number((await ctx.params).id);
   const body = await request.json();
   const db = sql();
+  // Any message from the helper during a run also means "still online".
+  await db`UPDATE agent SET last_seen = now() WHERE id = 1`;
 
   if (body.file) {
     const { kind, part, data } = body.file;
