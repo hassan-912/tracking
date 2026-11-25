@@ -3,6 +3,6 @@ __pycache__/
 results/
 *.xlsx
 tls_password.txt
-data/
+/data/
 .streamlit/secrets.toml
 office_helper.env
