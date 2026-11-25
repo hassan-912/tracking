@@ -5,3 +5,4 @@ results/
 tls_password.txt
 data/
 .streamlit/secrets.toml
+office_helper.env
