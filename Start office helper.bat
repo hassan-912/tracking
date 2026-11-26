@@ -17,6 +17,7 @@ echo To stop it, close this window.
 echo.
 :run
 ".venv\Scripts\python.exe" office_helper.py
+if errorlevel 3 if not errorlevel 4 exit /b 0
 echo.
 echo The helper stopped. Restarting in 15 seconds - close this window to stop it for good.
 timeout /t 15 /nobreak >nul

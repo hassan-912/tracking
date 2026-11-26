@@ -184,6 +184,19 @@ def upload_clients() -> None:
             print(f"{cat.title:14} {answer.get('imported', 0)} uploaded")
 
 
+ALREADY_RUNNING = 3            # exit code: "Start office helper.bat" then closes instead of retrying
+_mutex = None
+
+
+def _only_copy_on_this_pc() -> bool:
+    """True if no other helper is running for this Windows user (auto start + Desktop
+    double-click would otherwise run two)."""
+    global _mutex
+    import ctypes
+    _mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "VisaTrackingOfficeHelper")
+    return ctypes.windll.kernel32.GetLastError() != 183      # ERROR_ALREADY_EXISTS
+
+
 def main() -> None:
     global SITE, TOKEN
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -191,6 +204,11 @@ def main() -> None:
     if "--upload" in sys.argv:
         upload_clients()
         return
+    if not _only_copy_on_this_pc():
+        print("The office helper is already running on this PC (another window). "
+              "This window will close.")
+        time.sleep(5)
+        sys.exit(ALREADY_RUNNING)
     host = socket.gethostname()
     print(f"Office helper running on {host} for {SITE}\nKeep this window open. Ctrl+C to stop.")
     while True:
