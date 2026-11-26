@@ -120,16 +120,16 @@ class Run:
         self.report(state="running")
 
     def tls_step(self, info: dict, copy) -> str:
-        """TLS, one client at a time: show this client (and what's happening) on the
-        website whenever that changes, copy what staff ask for onto this PC's clipboard,
-        and say which button was pressed: "next" (read it now), "skip", "stop" or ""."""
+        """TLS: show the open group of clients (and what's happening) on the website
+        whenever that changes, copy what staff ask for ("password-3") onto this PC's
+        clipboard, and say which button was pressed: "next" (read them now), "stop" or ""."""
         if info != getattr(self, "_shown", None):
             self._flush()
             self.report(state="waiting", windows=1, step=info)
             self._shown = info
         answer = self.report()
         request = answer.get("request", "")
-        if request in ("email", "password"):
+        if request.startswith(("email-", "password-")):
             copy(request)
         if answer.get("state") in ("cancelled", "missing"):
             return "stop"

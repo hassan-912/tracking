@@ -6,11 +6,12 @@ import { categoryOf, type CategoryKey } from "@/lib/categories";
 
 type Client = { id: number; name: string; ref: string; problem: string };
 type Result = { client: string; status?: string; problem?: string; changed?: string };
+type StepClient = { n: number; client: string; email: string; state: string; why: string };
 type Step = {
-  n: number; total: number; client: string; email: string; site: string;
-  stage: "filling" | "captcha" | "manual" | "reading"; why?: string;
+  stage: "filling" | "captcha" | "reading"; site: string;
+  from: number; to: number; total: number; clients: StepClient[];
 };
-type Action = "done" | "cancel" | "email" | "password" | "skip";
+type Action = "done" | "cancel" | `email-${number}` | `password-${number}`;
 type Job = {
   id: number; category: string; state: string; windows: number; step: Step | null;
   log: string; error: string;
@@ -104,8 +105,8 @@ export default function Tracking() {
           )}
           {cat.manualLogin && (
             <span className="muted">
-              One client at a time on the office PC{agent?.host ? ` (${agent.host})` : ""}: the
-              program fills the login, you tick the CAPTCHA and click Login.
+              Up to 10 windows at a time on the office PC{agent?.host ? ` (${agent.host})` : ""}: the
+              program fills each login, you tick the CAPTCHAs and click Login.
             </span>
           )}
         </div>
@@ -220,54 +221,58 @@ function JobPanel({ job, onAct }: { job: Job; onAct: (a: Action) => void }) {
   );
 }
 
-/** TLS: the client whose Edge window is open on the office PC right now. */
+/** TLS: the group of Edge windows open on the office PC right now. */
 function TlsStep({ step, onAct }: { step: Step; onAct: (a: Action) => void }) {
-  const who = `TLS ${step.site} · client ${step.n} of ${step.total} · ${step.client}`;
+  const range = `clients ${step.from}–${step.to} of ${step.total}`;
+  const manual = step.clients.filter((c) => c.state === "manual");
   return (
     <div className="callout">
       {step.stage === "filling" && (
         <>
-          <strong>Opening TLS · {who}</strong>
+          <strong>Opening TLS {step.site} · {range}</strong>
           <p>
-            The program is opening the login page and typing the email and password. Don&apos;t
-            touch the office PC&apos;s mouse or keyboard for a few seconds.
+            The program is filling in each login. Don&apos;t touch the office PC&apos;s mouse or
+            keyboard until it says “Your turn”.
           </p>
         </>
       )}
       {step.stage === "captcha" && (
         <>
-          <strong>Your turn: CAPTCHA · {who}</strong>
+          <strong>Your turn: CAPTCHAs · TLS {step.site} · {range}</strong>
           <p>
-            In the Edge window on the office PC, tick <em>I&apos;m not a robot</em> (and pick the
-            pictures if asked), then click <em>Login</em>. The program notices the login by
-            itself, reads the status and moves to the next client.
+            {step.clients.length} Edge window(s) are open on the office PC with the email and
+            password filled in. In each one: tick <em>I&apos;m not a robot</em> (and pick the
+            pictures if asked), then click <em>Login</em>. When every window shows the
+            account page, press the button.
           </p>
+          <button className="primary" onClick={() => onAct("done")}>
+            I&apos;ve logged in all {step.clients.length}
+          </button>
         </>
       )}
-      {step.stage === "manual" && (
+      {step.stage === "reading" && <strong>Reading the statuses · TLS {step.site} · {range}</strong>}
+      {step.stage !== "reading" && manual.length > 0 && (
         <>
-          <strong>Your turn: log in yourself · {who}</strong>
-          <p>
-            The program couldn&apos;t fill the form by itself ({step.why}). The email is copied:
-            paste it with Ctrl+V, press <em>Copy password</em> and paste that, tick the CAPTCHA
-            and click Login. The program notices the login by itself.
+          <p className="error">
+            The program couldn&apos;t fill {manual.length === 1 ? "this login" : "these logins"}:
+            fill {manual.length === 1 ? "it" : "them"} yourself with the copy buttons, then paste
+            with Ctrl+V.
           </p>
+          <table className="grid">
+            <tbody>
+              {manual.map((c) => (
+                <tr key={c.n}>
+                  <td>{c.n}. {c.client}</td>
+                  <td className="muted">{c.why}</td>
+                  <td>
+                    <button onClick={() => onAct(`email-${c.n}`)}>Copy email</button>{" "}
+                    <button onClick={() => onAct(`password-${c.n}`)}>Copy password</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </>
-      )}
-      {step.stage === "reading" && <strong>Logged in · reading the status · {who}</strong>}
-      {step.stage !== "reading" && (
-        <div className="toolbar">
-          {step.stage === "manual" && (
-            <>
-              <button onClick={() => onAct("email")}>Copy email</button>
-              <button onClick={() => onAct("password")}>Copy password</button>
-            </>
-          )}
-          {step.stage !== "filling" && (
-            <button onClick={() => onAct("done")}>I&apos;m logged in: read it now</button>
-          )}
-          <button onClick={() => onAct("skip")}>Skip this client</button>
-        </div>
       )}
     </div>
   );

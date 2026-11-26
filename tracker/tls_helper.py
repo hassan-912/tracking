@@ -252,8 +252,19 @@ def _must_be_in_front(hwnd: int) -> None:
         raise NotInFront
 
 
-def _click(hwnd: int, x: int, y: int) -> None:
+def _to_front(hwnd: int) -> None:
+    """Make the client's window the active one before acting (another window that has
+    just opened may have taken the focus); NotInFront if Windows won't allow it."""
+    for _ in range(3):
+        if user32.GetForegroundWindow() == hwnd:
+            return
+        _bring_to_front(hwnd)
+        time.sleep(0.6)
     _must_be_in_front(hwnd)
+
+
+def _click(hwnd: int, x: int, y: int) -> None:
+    _to_front(hwnd)
     user32.SetCursorPos(x, y)
     time.sleep(0.15)
     _send(_INPUT(type=0, mi=_MOUSEINPUT(dwFlags=MOUSEEVENTF_LEFTDOWN)),
@@ -282,8 +293,19 @@ class Window:
 
     @property
     def hwnd(self) -> int:
-        found = _windows_of(self.pid)
-        return found[0] if found else 0
+        """The browser window itself: the process's biggest window (Edge also owns small
+        helper windows), restored first if someone minimised it."""
+        best, best_area = 0, -1
+        for hwnd in _windows_of(self.pid):
+            if user32.IsIconic(hwnd):
+                user32.ShowWindow(hwnd, 3)          # SW_MAXIMIZE
+                time.sleep(0.5)
+            rect = wintypes.RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            area = max(0, rect.right - rect.left) * max(0, rect.bottom - rect.top)
+            if area > best_area:
+                best, best_area = hwnd, area
+        return best
 
     def look(self, bring: bool = True) -> tuple[bytes | None, list[ocr.Line]]:
         """Screenshot + the text in it. With bring=False it only looks when the window
@@ -299,7 +321,10 @@ class Window:
             return None, []
         rect = wintypes.RECT()
         user32.GetWindowRect(hwnd, ctypes.byref(rect))
-        self.box = (max(rect.left, 0), max(rect.top, 0), rect.right, rect.bottom)
+        box = (max(rect.left, 0), max(rect.top, 0), rect.right, rect.bottom)
+        if box[2] - box[0] < 200 or box[3] - box[1] < 200:
+            return None, []                  # not a usable size right now: look again later
+        self.box = box
         buf = io.BytesIO()
         ImageGrab.grab(bbox=self.box, all_screens=True).save(buf, "PNG")
         shot = buf.getvalue()
@@ -348,7 +373,10 @@ def fill_login(window: Window, acc: Account, poll: Callable[[], str], say) -> st
     if not lines:
         return "manual: the TLS page didn't load (or Cloudflare wants a tick)"
     if not any(LOGIN_FORM.search(l.text) for l in lines):
-        window.click(_find(lines, r"log ?in"))
+        try:
+            window.click(_find(lines, r"log ?in"))
+        except NotInFront:
+            return "manual: the window couldn't be brought to the front"
         lines, answer = _wait_for(window, lambda ls: any(LOGIN_FORM.search(l.text) for l in ls),
                                   60, poll)
         if answer:
@@ -360,92 +388,143 @@ def fill_login(window: Window, acc: Account, poll: Callable[[], str], say) -> st
     email_label, password_label = _find(lines, r"email"), _find(lines, r"password")
     if not email_label or not password_label:
         return "manual: couldn't find the Email and Password boxes"
-    window.click(email_label)
-    _type_into_focused(window.hwnd, acc.username)
-    window.click(password_label)
-    _type_into_focused(window.hwnd, acc.password)
+    for attempt in range(3):           # another window taking the focus interrupts a field:
+        try:                           # start that field again (Ctrl+A clears it first)
+            window.click(email_label)
+            _type_into_focused(window.hwnd, acc.username)
+            window.click(password_label)
+            _type_into_focused(window.hwnd, acc.password)
+            break
+        except NotInFront:
+            if attempt == 2:
+                raise
+            time.sleep(1)
     say("    email and password filled in: waiting for the CAPTCHA and Login")
     return ""
 
 
-def wait_for_login(window: Window, poll: Callable[[], str], minutes: int = 6) -> tuple[str, str]:
-    """After the form is filled: wait for staff to tick the CAPTCHA and click Login.
-    Returns ("in", "") when the account page shows, ("", button) if one was pressed,
-    ("error", what TLS said) on a wrong password, or ("timeout", "")."""
-    end = time.monotonic() + minutes * 60
-    left_form = 0
-    while time.monotonic() < end:
-        answer = poll()
-        if answer:
-            return "", answer
-        _, lines = window.look(bring=False)          # never pull focus while staff work
-        if lines:
-            text = [l.text for l in lines if l.top > PAGE_TOP]
-            address = " ".join(l.text for l in lines if l.top <= PAGE_TOP).lower()
-            error = next((l for l in text if LOGIN_ERROR.search(l)), "")
-            if error:
-                return "error", error
-            # Logged in = the address bar shows TLS but no longer its sign-in address
-            # (auth.visas-…), and no login form or Cloudflare check is on screen. A
-            # picture CAPTCHA covering the form doesn't change the address, so it can't
-            # be mistaken for a login.
-            on_form = ("tlscontact" not in address or "auth." in address
-                       or any(LOGIN_FORM.search(l) or CLOUDFLARE.search(l) for l in text))
-            # ... for two looks in a row (the page has settled).
-            left_form = 0 if on_form else left_form + 1
-            if left_form >= 2:
-                return "in", ""
-        time.sleep(2)
-    return "timeout", ""
+def logged_in(lines: list[ocr.Line]) -> bool:
+    """The address bar shows TLS but no longer its sign-in address (auth.visas-…), and
+    no login form or Cloudflare check is on screen. (A picture CAPTCHA covering the form
+    doesn't change the address, so it can't be mistaken for a login.)"""
+    address = " ".join(l.text for l in lines if l.top <= PAGE_TOP).lower()
+    page = [l.text for l in lines if l.top > PAGE_TOP]
+    return ("tlscontact" in address and "auth." not in address
+            and not any(LOGIN_FORM.search(l) or CLOUDFLARE.search(l) for l in page))
 
 
-def _one_web(acc: Account, n: int, total: int, profiles: Path, step: Step, say) -> dict:
-    entry = {"row": acc.row, "column": acc.column, "client": acc.name,
-             "login": mask(acc.username),
+# Windows opened at once. Each is a login from this office's internet connection; a
+# few dozen in the same minute could make Cloudflare or TLS block the connection.
+GROUP = 10
+
+
+class _Open:
+    """One client's Edge window in the current group."""
+
+    def __init__(self, i: int, n: int, acc: Account, profiles: Path):
+        self.i, self.n, self.acc = i, n, acc
+        self.edge, self.profile = _open_edge(acc, profiles)
+        self.window = Window(self.edge.pid)
+        self.state, self.why = "waiting", ""
+
+    def show(self) -> dict:
+        return {"n": self.n, "client": self.acc.name or mask(self.acc.username),
+                "email": self.acc.username, "state": self.state, "why": self.why}
+
+
+def _read_one(o: _Open) -> dict:
+    entry = {"row": o.acc.row, "column": o.acc.column, "client": o.acc.name,
+             "login": mask(o.acc.username),
              "checked_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
-    info = {"n": n, "total": total, "client": acc.name or mask(acc.username),
-            "email": acc.username, "site": SITE_NAMES.get(acc.site, acc.site), "stage": "filling"}
-    values = {"email": acc.username, "password": acc.password}
-    copy = lambda what: copy_to_clipboard(values.get(what, ""))   # noqa: E731
-    poll = lambda: step(info, copy)                                # noqa: E731
-
-    edge, profile = _open_edge(acc, profiles)
-    window = Window(edge.pid)
-    try:
-        try:
-            answer = fill_login(window, acc, poll, say)
-        except NotInFront:
-            answer = "manual: another window was clicked while the program was typing"
-        if answer.startswith("manual:"):
-            say(f"    couldn't fill the form by itself ({answer[8:]}): staff fill it")
-            info = {**info, "stage": "manual", "why": answer[8:]}
-            copy_to_clipboard(acc.username)
-            answer = ""
-        else:
-            info = {**info, "stage": "captcha"}
-
-        result = ""
-        if not answer:
-            result, answer = wait_for_login(window, poll)
-        if answer == "stop":
-            entry["problem"], entry["_stop"] = "Not checked: run stopped", True
-        elif answer == "skip":
-            entry["problem"] = "Skipped"
-        elif result == "error":
-            entry["problem"] = f"TLS refused the login: {answer or 'wrong email or password'}"
-            entry["_screenshot"] = window.look()[0]
-        elif result == "timeout":
-            entry["problem"] = "Not logged in within 6 minutes (see screenshot)"
-            entry["_screenshot"] = window.look()[0]
-        else:                                   # logged in, or "Read it now" pressed
-            info = {**info, "stage": "reading"}
-            poll()
-            time.sleep(3)                       # let the account page finish loading
-            _read_window(entry, edge.pid)
+    for _ in range(3):
+        shot, lines = o.window.look()
+        if shot:
+            break
+        time.sleep(1)
+    entry["_screenshot"] = shot
+    if not shot:
+        entry["problem"] = "The Edge window was closed before the screenshot"
         return entry
+    text = [l.text for l in lines if l.top > PAGE_TOP]
+    error = next((l for l in text if LOGIN_ERROR.search(l)), "")
+    if error:
+        entry["problem"] = f"TLS refused the login: {error}"
+    elif not logged_in(lines):
+        entry["problem"] = "Not logged in (see screenshot)"
+    else:
+        status, problem = read_status(text)
+        entry["status"] = status
+        if problem:
+            entry["problem"] = problem
+    entry["details"] = clean_text("\n".join(text))
+    return entry
+
+
+def _group(group: list[tuple[int, Account]], first: int, total: int, profiles: Path,
+           step: Step, say) -> tuple[dict[int, dict], bool]:
+    """Open a group of windows, fill each login, wait for staff to do every CAPTCHA and
+    press the website button, then read every window. Returns ({i: entry}, stopped)."""
+    site = SITE_NAMES.get(group[0][1].site, group[0][1].site)
+    opened: list[_Open] = []
+    by_n: dict[int, Account] = {}
+
+    def copy(request: str) -> None:               # "email-3" / "password-3"
+        kind, _, n = request.partition("-")
+        acc = by_n.get(int(n)) if n.isdigit() else None
+        if acc:
+            copy_to_clipboard(acc.username if kind == "email" else acc.password)
+
+    def poll(stage: str) -> str:
+        return step({"stage": stage, "site": site, "from": first, "to": first + len(group) - 1,
+                     "total": total, "clients": [o.show() for o in opened]}, copy)
+
+    try:
+        for k, (i, acc) in enumerate(group):
+            opened.append(_Open(i, first + k, acc, profiles))
+            by_n[first + k] = acc
+            time.sleep(1.0)                       # don't hit TLS all in the same second
+        for o in opened:                          # fill them one by one (typing needs focus)
+            o.state = "filling"
+            if poll("filling") == "stop":
+                return {}, True
+            try:
+                answer = fill_login(o.window, o.acc,
+                                    lambda: "stop" if poll("filling") == "stop" else "", say)
+            except NotInFront:
+                answer = "manual: another window was clicked while the program was typing"
+            if answer == "stop":
+                return {}, True
+            o.state, o.why = ("manual", answer[8:]) if answer.startswith("manual:") else ("ready", "")
+        say(f"    {sum(o.state == 'ready' for o in opened)} of {len(opened)} TLS logins filled in: "
+            "waiting for the CAPTCHAs")
+        while True:                               # staff: every CAPTCHA + Login, then the button
+            answer = poll("captcha")
+            if answer == "stop":
+                return {}, True
+            if answer == "next":
+                break
+            time.sleep(1.5)
+        poll("reading")
+        return {o.i: _read_one(o) for o in opened}, False
     finally:
         clear_clipboard()
-        _close_edge(edge, profile)
+        for o in opened:
+            _close_edge(o.edge, o.profile)
+
+
+def _run_web(ready: list[tuple[int, Account]], profiles: Path, step: Step, say) -> dict[int, dict]:
+    """Website mode: the clients in groups of GROUP windows. Returns {i: entry}."""
+    entries: dict[int, dict] = {}
+    for start in range(0, len(ready), GROUP):
+        group = ready[start:start + GROUP]
+        found, stopped = _group(group, start + 1, len(ready), profiles, step, say)
+        entries.update(found)
+        if stopped:
+            break
+    for i, acc in ready:                          # anything not reached
+        entries.setdefault(i, {"row": acc.row, "column": acc.column, "client": acc.name,
+                               "login": mask(acc.username), "problem": "Not checked: run stopped"})
+    return entries
 
 
 def _ask(prompt: str) -> str:
@@ -509,20 +588,20 @@ def run(accounts: list[tuple[int, Account]], report: list, previous: dict | None
                          "login": mask(a.username), "problem": a.problem}
     if not ready:
         return
-    say(f"\n━━ TLS: {len(ready)} client(s), one at a time ━━")
+    say(f"\n━━ TLS: {len(ready)} client(s){f', {GROUP} windows at a time' if step else ''} ━━")
     if not step:
         print("   TLS blocks programs, so you log in yourself; the program copies the email and")
         print("   password for you and takes the screenshot. Type stop at any time to end.")
     profiles = Path(tempfile.mkdtemp(prefix="tls-helper-"))
     try:
+        web = _run_web(ready, profiles, step, say) if step else {}
         stopped = False
         for n, (i, acc) in enumerate(ready, 1):
             if stopped:
                 report[i] = {"row": acc.row, "column": acc.column, "client": acc.name,
                              "login": mask(acc.username), "problem": "Not checked: helper stopped"}
                 continue
-            entry = (_one_web(acc, n, len(ready), profiles, step, say) if step
-                     else _one(acc, n, len(ready), profiles))
+            entry = web[i] if step else _one(acc, n, len(ready), profiles)
             stopped = bool(entry.pop("_stop", False))
             before = (previous or {}).get((acc.row, acc.column))
             if before is not None and entry.get("status") and before != entry["status"]:

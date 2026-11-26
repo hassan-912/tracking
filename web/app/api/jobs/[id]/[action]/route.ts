@@ -3,15 +3,15 @@ import { ensureSchema, sql } from "@/lib/db";
 
 // POST /api/jobs/5/done    -> "I've finished all the CAPTCHAs"
 // POST /api/jobs/5/cancel  -> stop this run
-// POST /api/jobs/5/email | password | skip  -> TLS: copy that onto the office PC's
-//                                             clipboard, or skip this client
+// POST /api/jobs/5/email-3 | password-3  -> TLS: copy client 3's email / password onto
+//                                          the office PC's clipboard
 export async function POST(_request: Request, ctx: RouteContext<"/api/jobs/[id]/[action]">) {
   await ensureSchema();
   const { id, action } = await ctx.params;
   const db = sql();
   if (action === "done") {
     await db`UPDATE jobs SET done_clicked = true WHERE id = ${Number(id)}`;
-  } else if (action === "email" || action === "password" || action === "skip") {
+  } else if (/^(email|password)-\d+$/.test(action)) {
     await db`UPDATE jobs SET request = ${action} WHERE id = ${Number(id)} AND state = 'waiting'`;
   } else if (action === "cancel") {
     await db`UPDATE jobs SET state = 'cancelled', finished_at = now()
