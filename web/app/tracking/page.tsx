@@ -8,10 +8,10 @@ type Client = { id: number; name: string; ref: string; problem: string };
 type Result = { client: string; status?: string; problem?: string; changed?: string };
 type StepClient = { n: number; client: string; email: string; state: string; why: string };
 type Step = {
-  stage: "filling" | "captcha" | "reading"; site: string;
-  from: number; to: number; total: number; clients: StepClient[];
+  stage: "filling" | "captcha"; site: string;
+  from: number; to: number; total: number; current: number; clients: StepClient[];
 };
-type Action = "done" | "cancel" | `email-${number}` | `password-${number}`;
+type Action = "done" | "cancel" | "skip" | `email-${number}` | `password-${number}`;
 type Job = {
   id: number; category: string; state: string; windows: number; step: Step | null;
   log: string; error: string;
@@ -106,7 +106,7 @@ export default function Tracking() {
           {cat.manualLogin && (
             <span className="muted">
               Up to 10 windows at a time on the office PC{agent?.host ? ` (${agent.host})` : ""}: the
-              program fills each login, you tick the CAPTCHAs and click Login.
+              program fills each login, you tick each CAPTCHA, the program does the rest.
             </span>
           )}
         </div>
@@ -225,6 +225,7 @@ function JobPanel({ job, onAct }: { job: Job; onAct: (a: Action) => void }) {
 function TlsStep({ step, onAct }: { step: Step; onAct: (a: Action) => void }) {
   const range = `clients ${step.from}–${step.to} of ${step.total}`;
   const manual = step.clients.filter((c) => c.state === "manual");
+  const now = step.clients.find((c) => c.n === step.current);
   return (
     <div className="callout">
       {step.stage === "filling" && (
@@ -238,20 +239,26 @@ function TlsStep({ step, onAct }: { step: Step; onAct: (a: Action) => void }) {
       )}
       {step.stage === "captcha" && (
         <>
-          <strong>Your turn: CAPTCHAs · TLS {step.site} · {range}</strong>
-          <p>
-            {step.clients.length} Edge window(s) are open on the office PC with the email and
-            password filled in. In each one: tick <em>I&apos;m not a robot</em> (and pick the
-            pictures if asked), then click <em>Login</em>. When every window shows the
-            account page, press the button.
-          </p>
-          <button className="primary" onClick={() => onAct("done")}>
-            I&apos;ve logged in all {step.clients.length}
-          </button>
+          <strong>
+            Your turn: CAPTCHA · TLS {step.site} · client {step.current} of {step.total}
+            {now ? ` · ${now.client}` : ""}
+          </strong>
+          {now?.state === "reading" ? (
+            <p>Logged in · opening the status…</p>
+          ) : (
+            <p>
+              On the office PC, in the Edge window in front: tick <em>I&apos;m not a robot</em>{" "}
+              (and pick the pictures if asked). The program then clicks Login, opens the status,
+              reads it, closes the window and brings the next one. A wrong password just closes
+              that window.
+            </p>
+          )}
+          <div className="toolbar">
+            <button onClick={() => onAct("skip")}>Skip this client</button>
+          </div>
         </>
       )}
-      {step.stage === "reading" && <strong>Reading the statuses · TLS {step.site} · {range}</strong>}
-      {step.stage !== "reading" && manual.length > 0 && (
+      {manual.length > 0 && (
         <>
           <p className="error">
             The program couldn&apos;t fill {manual.length === 1 ? "this login" : "these logins"}:

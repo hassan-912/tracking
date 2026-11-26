@@ -27,7 +27,7 @@ from pathlib import Path
 
 from PIL import ImageGrab
 
-from . import ocr
+from . import ocr, tls_pages
 from .portals.base import clean_text
 from .sheet import Account, mask
 
@@ -234,7 +234,7 @@ class _INPUT(ctypes.Structure):
 
 KEYEVENTF_KEYUP, KEYEVENTF_UNICODE = 0x0002, 0x0004
 MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP = 0x0002, 0x0004
-VK_CONTROL, VK_A, VK_DELETE = 0x11, 0x41, 0x2E
+VK_CONTROL, VK_A, VK_DELETE, VK_ESCAPE = 0x11, 0x41, 0x2E, 0x1B
 
 
 def _send(*inputs: _INPUT) -> None:
@@ -307,9 +307,10 @@ class Window:
                 best, best_area = hwnd, area
         return best
 
-    def look(self, bring: bool = True) -> tuple[bytes | None, list[ocr.Line]]:
-        """Screenshot + the text in it. With bring=False it only looks when the window
-        is already in front (so it never pulls focus away from staff)."""
+    def look(self, bring: bool = True, read: bool = True) -> tuple[bytes | None, list[ocr.Line]]:
+        """Screenshot + the text in it (read=False: just the picture, much faster).
+        With bring=False it only looks when the window is already in front (so it never
+        pulls focus away from staff)."""
         hwnd = self.hwnd
         if not hwnd:
             return None, []
@@ -328,7 +329,7 @@ class Window:
         buf = io.BytesIO()
         ImageGrab.grab(bbox=self.box, all_screens=True).save(buf, "PNG")
         shot = buf.getvalue()
-        return shot, ocr.read_lines(shot)
+        return shot, (ocr.read_lines(shot) if read else [])
 
     def click(self, line: ocr.Line) -> None:
         x, y = line.centre
@@ -432,41 +433,167 @@ class _Open:
                 "email": self.acc.username, "state": self.state, "why": self.why}
 
 
-def _read_one(o: _Open) -> dict:
+TICK_WAIT_S = 4 * 60        # time staff have for one window's CAPTCHA
+
+
+def _press_escape(hwnd: int) -> None:
+    _to_front(hwnd)
+    _send(_key(VK_ESCAPE), _key(VK_ESCAPE, up=True))
+
+
+def _wait_lines(window: Window, test, seconds: float) -> tuple[bytes | None, list[ocr.Line]]:
+    """Look at the (front) window until test(lines) is true; (None, []) on timeout."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        shot, lines = window.look()
+        if lines and test(lines):
+            return shot, lines
+        time.sleep(1)
+    return None, []
+
+
+def _login(o: _Open, poll: Callable[[], str]) -> str:
+    """Bring the window to the front, wait for the person's CAPTCHA tick, click Login.
+    Returns "in", "wrong: <what TLS said>", "late" (no tick in time), "gone",
+    or a website button: "skip" / "stop"."""
+    window = o.window
+    robot = None
+    end = time.monotonic() + TICK_WAIT_S
+    while time.monotonic() < end:
+        answer = poll()
+        if answer in ("skip", "stop"):
+            return answer
+        hwnd = window.hwnd
+        if not hwnd:
+            return "gone"
+        if robot is None:                     # find the box (also when the page has moved)
+            shot, lines = window.look()
+            if lines and logged_in(lines):
+                return "in"
+            robot = tls_pages.robot_box(lines) if lines else None
+            login = _find(lines, r"log ?in", below=robot.bottom) if robot else None
+            if not robot or not login:
+                robot = None
+                time.sleep(1.5)
+                continue
+        shot, _ = window.look(bring=False, read=False)   # only while staff have it in front
+        if shot and tls_pages.ticked(shot, robot):
+            try:
+                window.click(login)
+            except NotInFront:
+                continue
+            result = _after_login_click(window)
+            if result != "again":
+                return result
+            robot = None                      # CAPTCHA expired: tick again
+        time.sleep(0.8)
+    return "late"
+
+
+def _after_login_click(window: Window) -> str:
+    """"in", "wrong: …", or "again" (still on the form, e.g. the tick expired)."""
+    end = time.monotonic() + 25
+    while time.monotonic() < end:
+        time.sleep(1.5)
+        _, lines = window.look()
+        if not lines:
+            continue
+        error = next((l.text for l in lines if l.top > PAGE_TOP and LOGIN_ERROR.search(l.text)), "")
+        if error:
+            return f"wrong: {error}"
+        if logged_in(lines):
+            return "in"
+    return "again"
+
+
+SELECT, CHECK_STATUS = r"select", r"check\s*status"
+
+
+def _read_status_box(o: _Open) -> tuple[str, str, bytes | None, str]:
+    """Logged in: Select the application group, press each Check status, read the
+    orange step. Returns (status, details, screenshot, problem)."""
+    window = o.window
+    shot, lines = _wait_lines(window, lambda ls: bool(_find(ls, SELECT) or _find(ls, CHECK_STATUS)), 40)
+    if not lines:
+        shot, _ = window.look()
+        return "", "", shot, "Logged in, but the application list didn't show (see screenshot)"
+    if not _find(lines, CHECK_STATUS):
+        window.click(_find(lines, SELECT))    # the first group ("My travel group")
+        shot, lines = _wait_lines(window, lambda ls: bool(_find(ls, CHECK_STATUS)), 40)
+        if not lines:
+            shot, _ = window.look()
+            return "", "", shot, "Opened the group, but no Check status button showed (see screenshot)"
+
+    count = sum(1 for l in lines if re.fullmatch(CHECK_STATUS, l.text, re.I) and l.top > PAGE_TOP)
+    statuses, details, pictures = [], [], []
+    for k in range(count):                    # one Check status per person in the group
+        _, lines = window.look()
+        buttons = sorted((l for l in lines if l.top > PAGE_TOP and
+                          re.fullmatch(CHECK_STATUS, l.text, re.I)), key=lambda l: l.top)
+        if k >= len(buttons):
+            break
+        window.click(buttons[k])
+        shot, box_lines = _wait_lines(window, lambda ls: any(
+            tls_pages.TRACK_TITLE.search(l.text) for l in ls), 20)
+        if not box_lines:
+            continue
+        time.sleep(0.8)                       # let the step icons draw
+        shot, box_lines = window.look()
+        found = tls_pages.steps(shot, box_lines)
+        status = tls_pages.status_of(found) or "(see screenshot)"
+        statuses.append(status if count == 1 else f"Applicant {k + 1}: {status}")
+        details.append(tls_pages.describe(found))
+        pictures.append(shot)
+        _press_escape(window.hwnd)            # close the box before the next one
+        time.sleep(0.8)
+        _, after = window.look()
+        if after and any(tls_pages.TRACK_TITLE.search(l.text) for l in after):
+            close = next((l for l in after if l.text.strip() in ("x", "X", "×")), None)
+            if close:
+                window.click(close)
+                time.sleep(0.8)
+    if not statuses:
+        shot, _ = window.look()
+        return "", "", shot, "Pressed Check status, but the steps didn't show (see screenshot)"
+    return "; ".join(statuses), "\n\n".join(details), tls_pages.stack(pictures), ""
+
+
+def _check_one(o: _Open, poll: Callable[[], str], say) -> dict:
     entry = {"row": o.acc.row, "column": o.acc.column, "client": o.acc.name,
              "login": mask(o.acc.username),
              "checked_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
-    for _ in range(3):
-        shot, lines = o.window.look()
-        if shot:
-            break
-        time.sleep(1)
-    entry["_screenshot"] = shot
-    if not shot:
-        entry["problem"] = "The Edge window was closed before the screenshot"
-        return entry
-    text = [l.text for l in lines if l.top > PAGE_TOP]
-    error = next((l for l in text if LOGIN_ERROR.search(l)), "")
-    if error:
-        entry["problem"] = f"TLS refused the login: {error}"
-    elif not logged_in(lines):
-        entry["problem"] = "Not logged in (see screenshot)"
+    result = _login(o, poll)
+    if result == "stop":
+        entry["problem"], entry["_stop"] = "Not checked: run stopped", True
+    elif result == "skip":
+        entry["problem"] = "Skipped"
+    elif result == "gone":
+        entry["problem"] = "The Edge window was closed"
+    elif result == "late":
+        entry["problem"] = "CAPTCHA not done within 4 minutes"
+    elif result.startswith("wrong:"):
+        entry["problem"] = f"Wrong email or password — TLS says: {result[7:]}"
     else:
-        status, problem = read_status(text)
-        entry["status"] = status
+        o.state = "reading"
+        poll()
+        status, details, shot, problem = _read_status_box(o)
+        entry["_screenshot"] = shot
+        if status:
+            entry["status"], entry["details"] = status, details
         if problem:
             entry["problem"] = problem
-    entry["details"] = clean_text("\n".join(text))
     return entry
 
 
 def _group(group: list[tuple[int, Account]], first: int, total: int, profiles: Path,
            step: Step, say) -> tuple[dict[int, dict], bool]:
-    """Open a group of windows, fill each login, wait for staff to do every CAPTCHA and
-    press the website button, then read every window. Returns ({i: entry}, stopped)."""
+    """Open a group of windows and fill every login; then window by window: staff tick
+    the CAPTCHA, the program clicks Login, opens the status, reads it and closes the
+    window. Returns ({i: entry}, stopped)."""
     site = SITE_NAMES.get(group[0][1].site, group[0][1].site)
     opened: list[_Open] = []
     by_n: dict[int, Account] = {}
+    current = {"n": 0}
 
     def copy(request: str) -> None:               # "email-3" / "password-3"
         kind, _, n = request.partition("-")
@@ -476,8 +603,10 @@ def _group(group: list[tuple[int, Account]], first: int, total: int, profiles: P
 
     def poll(stage: str) -> str:
         return step({"stage": stage, "site": site, "from": first, "to": first + len(group) - 1,
-                     "total": total, "clients": [o.show() for o in opened]}, copy)
+                     "total": total, "current": current["n"],
+                     "clients": [o.show() for o in opened]}, copy)
 
+    entries: dict[int, dict] = {}
     try:
         for k, (i, acc) in enumerate(group):
             opened.append(_Open(i, first + k, acc, profiles))
@@ -485,31 +614,38 @@ def _group(group: list[tuple[int, Account]], first: int, total: int, profiles: P
             time.sleep(1.0)                       # don't hit TLS all in the same second
         for o in opened:                          # fill them one by one (typing needs focus)
             o.state = "filling"
+            current["n"] = o.n
             if poll("filling") == "stop":
-                return {}, True
+                return entries, True
             try:
                 answer = fill_login(o.window, o.acc,
                                     lambda: "stop" if poll("filling") == "stop" else "", say)
             except NotInFront:
                 answer = "manual: another window was clicked while the program was typing"
             if answer == "stop":
-                return {}, True
+                return entries, True
             o.state, o.why = ("manual", answer[8:]) if answer.startswith("manual:") else ("ready", "")
-        say(f"    {sum(o.state == 'ready' for o in opened)} of {len(opened)} TLS logins filled in: "
-            "waiting for the CAPTCHAs")
-        while True:                               # staff: every CAPTCHA + Login, then the button
-            answer = poll("captcha")
-            if answer == "stop":
-                return {}, True
-            if answer == "next":
-                break
-            time.sleep(1.5)
-        poll("reading")
-        return {o.i: _read_one(o) for o in opened}, False
+
+        for o in opened:                          # window by window: tick -> Login -> status
+            current["n"] = o.n
+            o.state = "captcha" if o.state == "ready" else o.state
+            entry = _check_one(o, lambda: poll("captcha"), say)
+            o.state = "done"
+            _close_edge(o.edge, o.profile)        # wrong password or done: close it now
+            o.closed = True
+            stopped = bool(entry.pop("_stop", False))
+            entries[o.i] = entry
+            say(f"[TLS {o.n}/{total}] {o.acc.label()}",
+                "    ✖ " + entry["problem"] if entry.get("problem")
+                else f"    ✔ {entry.get('status', '')}")
+            if stopped:
+                return entries, True
+        return entries, False
     finally:
         clear_clipboard()
         for o in opened:
-            _close_edge(o.edge, o.profile)
+            if not getattr(o, "closed", False):
+                _close_edge(o.edge, o.profile)
 
 
 def _run_web(ready: list[tuple[int, Account]], profiles: Path, step: Step, say) -> dict[int, dict]:
@@ -520,6 +656,10 @@ def _run_web(ready: list[tuple[int, Account]], profiles: Path, step: Step, say) 
         found, stopped = _group(group, start + 1, len(ready), profiles, step, say)
         entries.update(found)
         if stopped:
+            for i, acc in ready:              # the rest weren't reached
+                if i not in entries:
+                    entries[i] = {"row": acc.row, "column": acc.column, "client": acc.name,
+                                  "login": mask(acc.username), "problem": "Not checked: run stopped"}
             break
     for i, acc in ready:                          # anything not reached
         entries.setdefault(i, {"row": acc.row, "column": acc.column, "client": acc.name,
@@ -606,9 +746,10 @@ def run(accounts: list[tuple[int, Account]], report: list, previous: dict | None
             before = (previous or {}).get((acc.row, acc.column))
             if before is not None and entry.get("status") and before != entry["status"]:
                 entry["changed"] = "YES"
-            say(f"[TLS {n}/{len(ready)}] {acc.label()}",
-                "    ✖ " + entry["problem"] if entry.get("problem")
-                else f"    ✔ {entry.get('status', '')}")
+            if not step:
+                say(f"[TLS {n}/{len(ready)}] {acc.label()}",
+                    "    ✖ " + entry["problem"] if entry.get("problem")
+                    else f"    ✔ {entry.get('status', '')}")
             report[i] = entry
     finally:
         clear_clipboard()
