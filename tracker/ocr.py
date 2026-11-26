@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 _SCRIPT = r"""
@@ -35,13 +36,38 @@ $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage([Windows.Globaliz
 if (-not $engine) { $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages() }
 $result = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
-$result.Lines | ForEach-Object { $_.Text }
+foreach ($line in $result.Lines) {
+    $w = $line.Words
+    $x = ($w | ForEach-Object { $_.BoundingRect.X } | Measure-Object -Minimum).Minimum
+    $y = ($w | ForEach-Object { $_.BoundingRect.Y } | Measure-Object -Minimum).Minimum
+    $r = ($w | ForEach-Object { $_.BoundingRect.X + $_.BoundingRect.Width } | Measure-Object -Maximum).Maximum
+    $b = ($w | ForEach-Object { $_.BoundingRect.Y + $_.BoundingRect.Height } | Measure-Object -Maximum).Maximum
+    "{0}`t{1}`t{2}`t{3}`t{4}" -f [int]$x, [int]$y, [int]$r, [int]$b, $line.Text
+}
 $stream.Dispose()
 """
 
 
+@dataclass(frozen=True)
+class Line:
+    text: str
+    left: int
+    top: int
+    right: int
+    bottom: int
+
+    @property
+    def centre(self) -> tuple[int, int]:
+        return (self.left + self.right) // 2, (self.top + self.bottom) // 2
+
+
 def read_text(png: bytes) -> list[str]:
     """Lines of text in the picture ([] if Windows couldn't read it)."""
+    return [line.text for line in read_lines(png)]
+
+
+def read_lines(png: bytes) -> list[Line]:
+    """Lines of text in the picture with where they are (pixels in the picture)."""
     with tempfile.TemporaryDirectory(prefix="ocr-") as tmp:
         image, script = Path(tmp) / "shot.png", Path(tmp) / "ocr.ps1"
         image.write_bytes(png)
@@ -55,5 +81,9 @@ def read_text(png: bytes) -> list[str]:
             return []
     if done.returncode:
         return []
-    return [" ".join(l.split()) for l in done.stdout.decode("utf-8", "replace").splitlines()
-            if l.strip()]
+    lines = []
+    for row in done.stdout.decode("utf-8", "replace").splitlines():
+        parts = row.split("\t", 4)
+        if len(parts) == 5 and parts[4].strip():
+            lines.append(Line(" ".join(parts[4].split()), *map(int, parts[:4])))
+    return lines

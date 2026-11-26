@@ -6,7 +6,10 @@ import { categoryOf, type CategoryKey } from "@/lib/categories";
 
 type Client = { id: number; name: string; ref: string; problem: string };
 type Result = { client: string; status?: string; problem?: string; changed?: string };
-type Step = { n: number; total: number; client: string; email: string; site: string };
+type Step = {
+  n: number; total: number; client: string; email: string; site: string;
+  stage: "filling" | "captcha" | "manual" | "reading"; why?: string;
+};
 type Action = "done" | "cancel" | "email" | "password" | "skip";
 type Job = {
   id: number; category: string; state: string; windows: number; step: Step | null;
@@ -101,8 +104,8 @@ export default function Tracking() {
           )}
           {cat.manualLogin && (
             <span className="muted">
-              One client at a time: you log in on the office PC{agent?.host ? ` (${agent.host})` : ""},
-              the program copies the details and reads the status.
+              One client at a time on the office PC{agent?.host ? ` (${agent.host})` : ""}: the
+              program fills the login, you tick the CAPTCHA and click Login.
             </span>
           )}
         </div>
@@ -219,25 +222,53 @@ function JobPanel({ job, onAct }: { job: Job; onAct: (a: Action) => void }) {
 
 /** TLS: the client whose Edge window is open on the office PC right now. */
 function TlsStep({ step, onAct }: { step: Step; onAct: (a: Action) => void }) {
+  const who = `TLS ${step.site} · client ${step.n} of ${step.total} · ${step.client}`;
   return (
     <div className="callout">
-      <strong>
-        Your turn: TLS {step.site} login {step.n} of {step.total} · {step.client}
-      </strong>
-      <ol>
-        <li>In the Edge window on the office PC, tick “Verify you are human” if it shows, then open Login.</li>
-        <li>The email <span className="mono">{step.email}</span> is already copied: click the email box and press Ctrl+V.</li>
-        <li>Press <em>Copy password</em> here, click the password box and press Ctrl+V. Click Log in.</li>
-        <li>When the page shows the application, press <em>Next client</em>. The program takes the screenshot and reads the status.</li>
-      </ol>
-      <div className="toolbar">
-        <button onClick={() => onAct("email")}>Copy email again</button>
-        <button onClick={() => onAct("password")}>Copy password</button>
-        <button className="primary" onClick={() => onAct("done")}>
-          {step.n < step.total ? "Next client" : "Finish"}
-        </button>
-        <button onClick={() => onAct("skip")}>Skip this client</button>
-      </div>
+      {step.stage === "filling" && (
+        <>
+          <strong>Opening TLS · {who}</strong>
+          <p>
+            The program is opening the login page and typing the email and password. Don&apos;t
+            touch the office PC&apos;s mouse or keyboard for a few seconds.
+          </p>
+        </>
+      )}
+      {step.stage === "captcha" && (
+        <>
+          <strong>Your turn: CAPTCHA · {who}</strong>
+          <p>
+            In the Edge window on the office PC, tick <em>I&apos;m not a robot</em> (and pick the
+            pictures if asked), then click <em>Login</em>. The program notices the login by
+            itself, reads the status and moves to the next client.
+          </p>
+        </>
+      )}
+      {step.stage === "manual" && (
+        <>
+          <strong>Your turn: log in yourself · {who}</strong>
+          <p>
+            The program couldn&apos;t fill the form by itself ({step.why}). The email is copied:
+            paste it with Ctrl+V, press <em>Copy password</em> and paste that, tick the CAPTCHA
+            and click Login. The program notices the login by itself.
+          </p>
+        </>
+      )}
+      {step.stage === "reading" && <strong>Logged in · reading the status · {who}</strong>}
+      {step.stage !== "reading" && (
+        <div className="toolbar">
+          {step.stage === "manual" && (
+            <>
+              <button onClick={() => onAct("email")}>Copy email</button>
+              <button onClick={() => onAct("password")}>Copy password</button>
+            </>
+          )}
+          {step.stage !== "filling" && (
+            <button onClick={() => onAct("done")}>I&apos;m logged in: read it now</button>
+          )}
+          <button onClick={() => onAct("skip")}>Skip this client</button>
+        </div>
+      )}
     </div>
   );
 }

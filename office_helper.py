@@ -120,26 +120,22 @@ class Run:
         self.report(state="running")
 
     def tls_step(self, info: dict, copy) -> str:
-        """TLS, one client at a time: show it on the website, copy what staff ask for
-        onto this PC's clipboard, and wait for "Next client" / "Skip" / "Stop"."""
-        self._flush()
-        self.report(state="waiting", windows=1, step=info)
-        try:
-            while True:
-                answer = self.report()
-                request = answer.get("request", "")
-                if request in ("email", "password"):
-                    copy(request)
-                elif request == "skip":
-                    return "skip"
-                if answer.get("state") in ("cancelled", "missing"):
-                    return "stop"
-                if answer.get("done_clicked"):
-                    return "next"
-                time.sleep(1.5)
-        finally:
-            if self.report().get("state") not in ("cancelled", "missing"):
-                self.report(state="running")
+        """TLS, one client at a time: show this client (and what's happening) on the
+        website whenever that changes, copy what staff ask for onto this PC's clipboard,
+        and say which button was pressed: "next" (read it now), "skip", "stop" or ""."""
+        if info != getattr(self, "_shown", None):
+            self._flush()
+            self.report(state="waiting", windows=1, step=info)
+            self._shown = info
+        answer = self.report()
+        request = answer.get("request", "")
+        if request in ("email", "password"):
+            copy(request)
+        if answer.get("state") in ("cancelled", "missing"):
+            return "stop"
+        if request == "skip":
+            return "skip"
+        return "next" if answer.get("done_clicked") else ""
 
     def accounts(self):
         from tracker import clients_db
