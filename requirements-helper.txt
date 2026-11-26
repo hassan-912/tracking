@@ -1,0 +1,4 @@
+# Only what the office helper needs (smaller and faster than requirements.txt)
+openpyxl>=3.1
+playwright>=1.45
+pillow>=10

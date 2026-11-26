@@ -6,3 +6,7 @@ tls_password.txt
 /data/
 .streamlit/secrets.toml
 office_helper.env
+
+# Never upload client screenshots / results (only the setup guide PDF)
+*.pdf
+!docs/Office helper setup guide.pdf
