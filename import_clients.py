@@ -40,9 +40,12 @@ def main() -> None:
     for path in args.workbooks:
         for acc in read_accounts(path):
             category = COLUMN_TO_CATEGORY.get(_key(acc.column))
+            if acc.portal == "tls":     # Germany or France, from the note in the cell
+                category = "tls_france" if acc.site == "fr" else "tls_germany"
             if not category:
-                continue            # GCKey, TLS, Almaviva… are not in the website
-            note = "" if _key(acc.column) == category.replace("_", "") else acc.column
+                continue            # GCKey, Almaviva… are not in the website
+            note = ("" if acc.portal == "tls" or _key(acc.column) == category.replace("_", "")
+                    else acc.column)
             if acc.problem:
                 note = (note + " · " if note else "") + f"Check: {acc.problem} (Excel row {acc.row})"
             rows = found.setdefault(category, [])

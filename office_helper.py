@@ -119,18 +119,31 @@ class Run:
             time.sleep(2)
         self.report(state="running")
 
+    def tls_step(self, info: dict, copy) -> str:
+        """TLS, one client at a time: show it on the website, copy what staff ask for
+        onto this PC's clipboard, and wait for "Next client" / "Skip" / "Stop"."""
+        self._flush()
+        self.report(state="waiting", windows=1, step=info)
+        try:
+            while True:
+                answer = self.report()
+                request = answer.get("request", "")
+                if request in ("email", "password"):
+                    copy(request)
+                elif request == "skip":
+                    return "skip"
+                if answer.get("state") in ("cancelled", "missing"):
+                    return "stop"
+                if answer.get("done_clicked"):
+                    return "next"
+                time.sleep(1.5)
+        finally:
+            if self.report().get("state") not in ("cancelled", "missing"):
+                self.report(state="running")
+
     def accounts(self):
         from tracker import clients_db
-        from tracker.sheet import Account
-        out = []
-        for c in self.clients:
-            ref = c["ref"].strip()
-            if self.category.portal != "wes":
-                ref = ref.replace(" ", "").upper()
-            out.append(Account(row=c["id"], column=self.category.title, portal=self.category.portal,
-                               name=c["name"], username=ref, password=c["secret"].strip(),
-                               problem=clients_db.problem_of(self.category.key, c["ref"], c["secret"])))
-        return out
+        return [clients_db.account_of(self.category.key, c) for c in self.clients]
 
     def upload(self, kind: str, path: Path | None) -> None:
         if not path or not path.exists():
@@ -151,7 +164,8 @@ class Run:
         try:
             accounts = self.accounts()
             report = run_tracker.run(accounts, results.previous_statuses(RESULTS_DIR),
-                                     max(1, len(accounts)), confirm=self.confirm)
+                                     max(1, len(accounts)), confirm=self.confirm,
+                                     tls_step=self.tls_step)
             rows = [{"client": r.get("client", ""), "status": r.get("status", ""),
                      "problem": r.get("problem", ""), "changed": r.get("changed", "")} for r in report]
             # The statuses must reach the website even if the PDF / Excel can't be made.

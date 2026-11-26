@@ -6,7 +6,7 @@ import { ensureSchema, sql } from "@/lib/db";
 export async function GET() {
   await ensureSchema();
   const db = sql();
-  const jobs = await db`SELECT id, category, state, windows, log, error, results,
+  const jobs = await db`SELECT id, category, state, windows, step, log, error, results,
       EXISTS (SELECT 1 FROM job_files f WHERE f.job_id = jobs.id AND f.kind = 'pdf') AS has_pdf,
       EXISTS (SELECT 1 FROM job_files f WHERE f.job_id = jobs.id AND f.kind = 'xlsx') AS has_xlsx,
       created_at, started_at, finished_at

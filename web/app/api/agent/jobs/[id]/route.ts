@@ -5,10 +5,12 @@ import { ensureSchema, sql } from "@/lib/db";
 // The office helper reports progress on a run:
 //   {log: "new lines"}                       append to the run's details
 //   {state: "waiting", windows: 3}           CAPTCHA windows are ready
+//   {state: "waiting", windows: 1, step: {…}} TLS: this client's window is open
 //   {state: "finished", results: [...]}      done
 //   {state: "failed", error: "..."}          went wrong
 //   {file: {kind: "pdf"|"xlsx", part: 0, data: "<base64>"}}  one part of a file
-// Answers with the run's state and whether "I've finished the CAPTCHAs" was pressed.
+// Answers with the run's state, whether "I've finished the CAPTCHAs" / "Next client"
+// was pressed, and any TLS button pressed since the last message (then forgets it).
 export async function POST(request: Request, ctx: RouteContext<"/api/agent/jobs/[id]">) {
   const denied = agentDenied(request);
   if (denied) return denied;
@@ -31,17 +33,22 @@ export async function POST(request: Request, ctx: RouteContext<"/api/agent/jobs/
     await db`UPDATE jobs SET log = right(log || ${String(body.log)}, 20000) WHERE id = ${id}`;
   }
   if (body.state === "waiting") {
-    await db`UPDATE jobs SET state = 'waiting', windows = ${Number(body.windows ?? 0)}
+    await db`UPDATE jobs SET state = 'waiting', windows = ${Number(body.windows ?? 0)},
+               step = ${body.step ? JSON.stringify(body.step) : null}::jsonb,
+               done_clicked = false, request = ''
              WHERE id = ${id} AND state <> 'cancelled'`;
   } else if (body.state === "running") {
-    await db`UPDATE jobs SET state = 'running' WHERE id = ${id} AND state <> 'cancelled'`;
+    await db`UPDATE jobs SET state = 'running', step = NULL
+             WHERE id = ${id} AND state <> 'cancelled'`;
   } else if (body.state === "finished" || body.state === "failed") {
     await db`UPDATE jobs SET state = ${body.state}, results = ${JSON.stringify(body.results ?? null)}::jsonb,
                error = ${String(body.error ?? "")}, finished_at = now()
              WHERE id = ${id}`;
   }
 
-  const rows = (await db`SELECT state, done_clicked FROM jobs WHERE id = ${id}`) as
-    { state: string; done_clicked: boolean }[];
+  const rows = (await db`WITH old AS (SELECT id, request FROM jobs WHERE id = ${id} FOR UPDATE)
+      UPDATE jobs SET request = '' FROM old WHERE jobs.id = old.id
+      RETURNING jobs.state, jobs.done_clicked, old.request`) as
+    { state: string; done_clicked: boolean; request: string }[];
   return NextResponse.json(rows[0] ?? { state: "missing", done_clicked: true });
 }

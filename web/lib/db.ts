@@ -34,6 +34,10 @@ export function ensureSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       started_at TIMESTAMPTZ,
       finished_at TIMESTAMPTZ)`;
+    // TLS runs go one client at a time: `step` is the client on screen now, `request`
+    // is a button staff pressed for it ("email" / "password" to copy, "skip").
+    await db`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS step JSONB`;
+    await db`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS request TEXT NOT NULL DEFAULT ''`;
     // PDF / Excel of a run, uploaded by the office PC in parts (Vercel caps each request at 4.5 MB).
     await db`CREATE TABLE IF NOT EXISTS job_files (
       job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,

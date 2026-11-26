@@ -44,9 +44,18 @@ CATEGORIES: dict[str, Category] = {c.key: c for c in (
              "E12345678901234", "Password", secret_is_password=True),
     Category("brazil", "Brazil", "brazil", "Recovery code", "AB12CD34EF",
              "Date of birth", secret_is_date=True),
+    Category("tls_germany", "TLS Germany", "tls", "Email", "client@email.com",
+             "Password", secret_is_password=True),
+    Category("tls_france", "TLS France", "tls", "Email", "client@email.com",
+             "Password", secret_is_password=True),
 )}
 
-_REF_PATTERNS = {"wes": EMAIL_RE, "bls": BLS_REF_RE, "vfs": VFS_REF_RE,
+# Sites that log in with an email: the reference is kept exactly as typed.
+EMAIL_PORTALS = ("wes", "tls")
+# TLS category -> which TLScontact site (see tracker/tls_helper.py).
+TLS_SITE = {"tls_germany": "de", "tls_france": "fr"}
+
+_REF_PATTERNS = {"wes": EMAIL_RE, "tls": EMAIL_RE, "bls": BLS_REF_RE, "vfs": VFS_REF_RE,
                  "romania": EVISA_NUMBER_RE, "brazil": BRAZIL_CODE_RE}
 
 
@@ -150,7 +159,7 @@ def apply_changes(category: str, ids: list[int], changes: dict) -> None:
 
     def clean(fields: dict) -> dict:
         out = {k: _as_text(v).strip() for k, v in fields.items() if k in FIELDS}
-        if "ref" in out and portal != "wes":
+        if "ref" in out and portal not in EMAIL_PORTALS:
             out["ref"] = out["ref"].replace(" ", "").upper()
         return out
 
@@ -182,7 +191,7 @@ def problem_of(category: str, ref: str, secret: str) -> str:
     if not ref:
         return f"{cat.ref_label} is empty"
     pattern = _REF_PATTERNS[cat.portal]
-    probe = ref if cat.portal == "wes" else ref.replace(" ", "")
+    probe = ref if cat.portal in EMAIL_PORTALS else ref.replace(" ", "")
     if not pattern.match(probe):
         return f"{cat.ref_label} doesn't look right (like {cat.ref_hint})"
     if not secret.strip():
@@ -190,17 +199,18 @@ def problem_of(category: str, ref: str, secret: str) -> str:
     return ""
 
 
+def account_of(category: str, client: dict) -> Account:
+    """One client (id, name, ref, secret) ready for the tracker."""
+    cat = CATEGORIES[category]
+    ref = client["ref"].strip()
+    if cat.portal not in EMAIL_PORTALS:
+        ref = ref.replace(" ", "").upper()
+    return Account(row=client["id"], column=cat.title, portal=cat.portal, name=client["name"],
+                   username=ref, password=client["secret"].strip(),
+                   problem=problem_of(category, client["ref"], client["secret"]),
+                   site=TLS_SITE.get(category, ""))
+
+
 def to_accounts(category: str, ids: list[int] | None = None) -> list[Account]:
     """The category's clients (or only `ids`) ready for the tracker."""
-    cat = CATEGORIES[category]
-    out = []
-    for r in load(category):
-        if ids is not None and r["id"] not in ids:
-            continue
-        ref = r["ref"].strip()
-        if cat.portal != "wes":
-            ref = ref.replace(" ", "").upper()
-        out.append(Account(row=r["id"], column=cat.title, portal=cat.portal, name=r["name"],
-                           username=ref, password=r["secret"].strip(),
-                           problem=problem_of(category, r["ref"], r["secret"])))
-    return out
+    return [account_of(category, r) for r in load(category) if ids is None or r["id"] in ids]

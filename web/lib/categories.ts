@@ -1,4 +1,4 @@
-// The six tracking sites. Same rules as tracker/clients_db.py on the office PC.
+// The tracking sites. Same rules as tracker/clients_db.py on the office PC.
 
 export type CategoryKey =
   | "wes"
@@ -6,7 +6,9 @@ export type CategoryKey =
   | "bls_study"
   | "vfs"
   | "romania_study"
-  | "brazil";
+  | "brazil"
+  | "tls_germany"
+  | "tls_france";
 
 export type Category = {
   key: CategoryKey;
@@ -17,11 +19,15 @@ export type Category = {
   secretLabel: string;
   secretKind: "text" | "date" | "password";
   usesCaptcha: boolean;
+  /** TLS: staff log in themselves, one client at a time (Cloudflare refuses programs). */
+  manualLogin?: boolean;
 };
+
+const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 export const CATEGORIES: Category[] = [
   { key: "wes", title: "WES", refLabel: "Email", refHint: "client@email.com",
-    refPattern: /^[^@\s]+@[^@\s]+\.[^@\s]+$/, secretLabel: "Password", secretKind: "password",
+    refPattern: EMAIL, secretLabel: "Password", secretKind: "password",
     usesCaptcha: false },
   { key: "bls_tourism", title: "BLS Tourism", refLabel: "BLS reference", refHint: "CAI12345678901",
     refPattern: /^[A-Z]{3}\d{6,}$/i, secretLabel: "Date of birth", secretKind: "date",
@@ -38,6 +44,12 @@ export const CATEGORIES: Category[] = [
   { key: "brazil", title: "Brazil", refLabel: "Recovery code", refHint: "AB12CD34EF",
     refPattern: /^[A-Z0-9]{10}$/i, secretLabel: "Date of birth", secretKind: "date",
     usesCaptcha: true },
+  { key: "tls_germany", title: "TLS Germany", refLabel: "Email", refHint: "client@email.com",
+    refPattern: EMAIL, secretLabel: "Password", secretKind: "password",
+    usesCaptcha: false, manualLogin: true },
+  { key: "tls_france", title: "TLS France", refLabel: "Email", refHint: "client@email.com",
+    refPattern: EMAIL, secretLabel: "Password", secretKind: "password",
+    usesCaptcha: false, manualLogin: true },
 ];
 
 export function categoryOf(key: string | null): Category | undefined {
@@ -47,7 +59,7 @@ export function categoryOf(key: string | null): Category | undefined {
 /** Tidy a reference the way the tracker expects it (no spaces, capitals; emails untouched). */
 export function cleanRef(cat: Category, ref: string): string {
   const t = ref.trim();
-  return cat.key === "wes" ? t : t.replace(/\s+/g, "").toUpperCase();
+  return cat.refPattern === EMAIL ? t : t.replace(/\s+/g, "").toUpperCase();
 }
 
 /** Why this client can't be checked yet ('' when it can). */

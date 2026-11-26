@@ -6,8 +6,11 @@ import { categoryOf, type CategoryKey } from "@/lib/categories";
 
 type Client = { id: number; name: string; ref: string; problem: string };
 type Result = { client: string; status?: string; problem?: string; changed?: string };
+type Step = { n: number; total: number; client: string; email: string; site: string };
+type Action = "done" | "cancel" | "email" | "password" | "skip";
 type Job = {
-  id: number; category: string; state: string; windows: number; log: string; error: string;
+  id: number; category: string; state: string; windows: number; step: Step | null;
+  log: string; error: string;
   results: Result[] | null; has_pdf: boolean; has_xlsx: boolean;
   created_at: string; finished_at: string | null;
 };
@@ -67,7 +70,7 @@ export default function Tracking() {
     poll();
   }
 
-  async function act(action: "done" | "cancel") {
+  async function act(action: Action) {
     if (!job) return;
     if (action === "cancel" && !confirm("Stop this tracking run?")) return;
     await fetch(`/api/jobs/${job.id}/${action}`, { method: "POST" });
@@ -95,6 +98,12 @@ export default function Tracking() {
           </button>
           {cat.usesCaptcha && (
             <span className="muted">CAPTCHA windows open on the office PC{agent?.host ? ` (${agent.host})` : ""}.</span>
+          )}
+          {cat.manualLogin && (
+            <span className="muted">
+              One client at a time: you log in on the office PC{agent?.host ? ` (${agent.host})` : ""},
+              the program copies the details and reads the status.
+            </span>
           )}
         </div>
         {error && <p className="error">{error}</p>}
@@ -138,7 +147,7 @@ function AgentStatus({ agent }: { agent: Agent }) {
   );
 }
 
-function JobPanel({ job, onAct }: { job: Job; onAct: (a: "done" | "cancel") => void }) {
+function JobPanel({ job, onAct }: { job: Job; onAct: (a: Action) => void }) {
   const title = categoryOf(job.category)?.title ?? job.category;
   const results = job.results ?? [];
   const okCount = results.filter((r) => !r.problem).length;
@@ -159,7 +168,8 @@ function JobPanel({ job, onAct }: { job: Job; onAct: (a: "done" | "cancel") => v
           or a security question.
         </p>
       )}
-      {job.state === "waiting" && (
+      {job.state === "waiting" && job.step && <TlsStep step={job.step} onAct={onAct} />}
+      {job.state === "waiting" && !job.step && (
         <div className="callout">
           <strong>Your turn: CAPTCHAs</strong>
           <p>
@@ -204,6 +214,31 @@ function JobPanel({ job, onAct }: { job: Job; onAct: (a: "done" | "cancel") => v
         </details>
       )}
     </section>
+  );
+}
+
+/** TLS: the client whose Edge window is open on the office PC right now. */
+function TlsStep({ step, onAct }: { step: Step; onAct: (a: Action) => void }) {
+  return (
+    <div className="callout">
+      <strong>
+        Your turn: TLS {step.site} login {step.n} of {step.total} · {step.client}
+      </strong>
+      <ol>
+        <li>In the Edge window on the office PC, tick “Verify you are human” if it shows, then open Login.</li>
+        <li>The email <span className="mono">{step.email}</span> is already copied: click the email box and press Ctrl+V.</li>
+        <li>Press <em>Copy password</em> here, click the password box and press Ctrl+V. Click Log in.</li>
+        <li>When the page shows the application, press <em>Next client</em>. The program takes the screenshot and reads the status.</li>
+      </ol>
+      <div className="toolbar">
+        <button onClick={() => onAct("email")}>Copy email again</button>
+        <button onClick={() => onAct("password")}>Copy password</button>
+        <button className="primary" onClick={() => onAct("done")}>
+          {step.n < step.total ? "Next client" : "Finish"}
+        </button>
+        <button onClick={() => onAct("skip")}>Skip this client</button>
+      </div>
+    </div>
   );
 }
 

@@ -136,10 +136,11 @@ def ask_in_terminal(windows: int) -> None:
 
 
 def run(accounts: list[Account], previous: dict, parallel: int,
-        confirm=ask_in_terminal) -> list[dict]:
+        confirm=ask_in_terminal, tls_step=None) -> list[dict]:
     """WES clients run `parallel` at a time; CAPTCHA portals (VFS, Romania
     e-Visa, BLS) all at once, waiting for one "yes" in the terminal; GCKey always
-    one at a time (it needs a person for OTPs and blocks bursts of logins)."""
+    one at a time (it needs a person for OTPs and blocks bursts of logins).
+    TLS clients go one by one through tls_helper (terminal, or the website via tls_step)."""
     from playwright.sync_api import sync_playwright
 
     from tracker.portals import captcha_gate
@@ -207,7 +208,7 @@ def run(accounts: list[Account], previous: dict, parallel: int,
     run_pool(captcha_items, len(captcha_items),
              while_running=(lambda: ask_when_captchas_done(windows)) if windows else None)
     # TLS (Cloudflare) refuses controlled browsers: a person logs in, the helper assists.
-    tls_helper.run(tls_items, report)
+    tls_helper.run(tls_items, report, previous, step=tls_step, say=say)
     run_pool([x for x in indexed if x[1].portal == "gckey"], 1)
     return [r for r in report if r is not None]
 
