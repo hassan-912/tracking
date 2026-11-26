@@ -15,6 +15,21 @@ $Zip     = 'https://github.com/hassan-912/tracking/archive/refs/heads/main.zip'
 $Ask     = -not $env:VT_NO_PROMPT                 # (testing switches)
 $Links   = -not $env:VT_NO_SHORTCUTS
 
+# Older Windows PowerShell may not offer TLS 1.2, which GitHub requires.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
+function Get-File($url, $out) {
+    # Retries: office Wi-Fi hiccups shouldn't break the setup.
+    for ($try = 1; $try -le 4; $try++) {
+        try { Invoke-WebRequest $url -OutFile $out -UseBasicParsing; return }
+        catch {
+            if ($try -eq 4) { throw "Could not download $url - check the internet connection and run this again. ($($_.Exception.Message))" }
+            Write-Host "      Download failed, retrying in $($try * 5) s..." -ForegroundColor Yellow
+            Start-Sleep ($try * 5)
+        }
+    }
+}
+
 function Step($n, $text) { Write-Host "`n[$n/7] $text" -ForegroundColor Cyan }
 function Ok($text)       { Write-Host "      $text" -ForegroundColor Green }
 function Warn($text)     { Write-Host "      $text" -ForegroundColor Yellow }
@@ -46,7 +61,7 @@ Ok "Found: $Python"
 Step 2 'Downloading the program from GitHub'
 $tmp = Join-Path $env:TEMP ('visa-tracking-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $tmp | Out-Null
-Invoke-WebRequest $Zip -OutFile "$tmp\program.zip"
+Get-File $Zip "$tmp\program.zip"
 Expand-Archive "$tmp\program.zip" -DestinationPath $tmp -Force
 $src = Join-Path $tmp 'tracking-main'
 New-Item -ItemType Directory -Force $Dir | Out-Null
