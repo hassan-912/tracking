@@ -1,7 +1,7 @@
 # Sets up the visa tracking office helper on this PC, from nothing.
 #
-# Run in PowerShell (as yourself, not as administrator):
-#     irm https://raw.githubusercontent.com/hassan-912/tracking/main/setup-helper.ps1 | iex
+# Run in PowerShell (as yourself, not as administrator) - one line:
+#     irm https://raw.githubusercontent.com/hassan-912/tracking/main/setup-helper.ps1 -OutFile "$env:TEMP\setup-helper.ps1"; powershell -ExecutionPolicy Bypass -File "$env:TEMP\setup-helper.ps1"
 #
 # It: installs Python 3.12 if missing, downloads the program to C:\visa-tracking
 # (or updates it, keeping your key file), installs its libraries, asks where the

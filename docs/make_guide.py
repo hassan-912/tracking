@@ -30,6 +30,7 @@ screenshots PDF back to the website.</p>
   <li>About <b>15 minutes</b></li>
 </ul>
 <h3>The steps</h3>
+<p><b>Quickest:</b> the next page has <b>one command</b> that does all of this.</p>
 <ol>
   <li>Install Python</li><li>Download the program</li><li>Install the helper</li>
   <li>Copy the key file</li><li>Stop the helper on the old PC</li><li>Start the helper</li>
@@ -38,6 +39,30 @@ screenshots PDF back to the website.</p>
 <h3>How to open the terminal (PowerShell)</h3>
 <p>Press the <b>Windows key</b>, type <b>PowerShell</b>, press <b>Enter</b>. Copy each grey box
 below into it and press <b>Enter</b>. Wait until each command finishes before the next one.</p>
+"""),
+    ("Fast way — one command does everything", """
+<p>Instead of Steps 1–8 one by one, this single command does all of them. First put
+<b>office_helper.env</b> on a <b>USB stick</b> and plug it in (the setup finds it there).</p>
+<p>Open <b>PowerShell</b> (Windows key → type PowerShell → Enter) and paste this as <b>one line</b>:</p>
+""" + cmd('irm https://raw.githubusercontent.com/hassan-912/tracking/main/setup-helper.ps1 '
+          '-OutFile "$env:TEMP\\setup-helper.ps1"; powershell -ExecutionPolicy Bypass '
+          '-File "$env:TEMP\\setup-helper.ps1"') + """
+<p>It will:</p>
+<ol>
+  <li>install <b>Python 3.12</b> if it is missing</li>
+  <li>download the program into <b>C:\\visa-tracking</b> (or update it, keeping the key file)</li>
+  <li>install the libraries</li>
+  <li>copy <b>office_helper.env</b> from the USB stick — or ask you where it is</li>
+  <li>turn on <b>auto start</b> and put <b>Visa tracking helper</b> on the Desktop</li>
+  <li>ask: <i>stop this PC sleeping while plugged in?</i> — answer <b>y</b></li>
+  <li>ask: <i>start the helper now?</i> — answer <b>y</b></li>
+</ol>
+<p class="ok">It ends with <i>Setup finished</i>. The website's Tracking page should then say
+<b>Office PC helper is online (&lt;this PC's name&gt;)</b>.</p>
+<div class="warn">Then on the <b>old PC</b>: close the helper window and double-click
+<b>Disable auto start.bat</b> — only one PC should run the helper.</div>
+<div class="note"><b>Updating later:</b> run the same command again. It keeps the key file and settings.
+<br><b>If anything fails:</b> run it again, or follow Steps 1–8 on the next pages.</div>
 """),
     ("Step 1 — Install Python", """
 <p>Python runs the helper. Install version <b>3.12</b> with one command:</p>
