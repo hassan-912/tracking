@@ -31,7 +31,7 @@ def previous_statuses(folder: Path) -> dict[tuple[int, str], str]:
 
 
 def write(folder: Path, rows: list[dict]) -> Path:
-    folder.mkdir(exist_ok=True)
+    folder.mkdir(parents=True, exist_ok=True)
     wb = Workbook()
     ws = wb.active
     ws.title = "Tracking"

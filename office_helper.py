@@ -152,13 +152,18 @@ class Run:
             accounts = self.accounts()
             report = run_tracker.run(accounts, results.previous_statuses(RESULTS_DIR),
                                      max(1, len(accounts)), confirm=self.confirm)
-            xlsx, pdf = run_tracker.save_outputs(report, RESULTS_DIR, self.category.title)
-            self._flush()
-            self.upload("pdf", pdf)
-            self.upload("xlsx", xlsx)
             rows = [{"client": r.get("client", ""), "status": r.get("status", ""),
                      "problem": r.get("problem", ""), "changed": r.get("changed", "")} for r in report]
-            self.report(state="finished", results=rows, log="Finished.\n")
+            # The statuses must reach the website even if the PDF / Excel can't be made.
+            note = ""
+            try:
+                xlsx, pdf = run_tracker.save_outputs(report, RESULTS_DIR, self.category.title)
+                self._flush()
+                self.upload("pdf", pdf)
+                self.upload("xlsx", xlsx)
+            except Exception as exc:
+                note = f"Could not make the PDF / Excel: {type(exc).__name__}: {exc}\n"
+            self.report(state="finished", results=rows, log=note + "Finished.\n")
             print(f"✔ run {self.job_id} finished")
         except Exception as exc:              # report it on the website, keep the helper alive
             self._flush()

@@ -132,6 +132,19 @@ def _not_found(page: Page) -> str:
     return ""   # a wrong CAPTCHA just shows the form again: keep waiting
 
 
+HINT_WORDS = re.compile(r"(captcha|invalid|incorrect|wrong|error|application|passport|status|"
+                        r"embassy|consulate|visa|reference|please|try again|not )", re.I)
+
+
+def _page_says(lines: list[str], reference: str) -> str:
+    """A few telling lines from the page, so staff (and we) can see what happened."""
+    picked = [l for l in lines if l and len(l) < 160 and
+              (reference.lower() in l.lower() or HINT_WORDS.search(l))]
+    picked = [l for l in picked if l.lower() not in ("reference number", "last name", "captcha")]
+    text = " | ".join(dict.fromkeys(picked))[:300]
+    return f"“{text}”" if text else "(nothing readable — see the screenshot)"
+
+
 def check(page: Page, reference: str, surname: str, who: str) -> Result:
     popups: list[Page] = []
     page.context.on("page", lambda new_page: popups.append(new_page))
@@ -160,7 +173,8 @@ def check(page: Page, reference: str, surname: str, who: str) -> Result:
     lines = [" ".join(l.split()) for l in text.splitlines()]
     status_lines = [l for l in lines if l and len(l) < 200 and STATUS_WORDS.search(l)]
     if not status_lines and _on_form(target):
-        return Result(problem="No result: the CAPTCHA wasn't submitted in this window "
-                              "(or VFS asked for it again)", screenshot=shot)
+        return Result(problem="No status found (CAPTCHA not accepted, or VFS showed something "
+                              f"unexpected). Page says: {_page_says(lines, reference)}",
+                      details=clean_text(text), screenshot=shot)
     return Result(status=status_lines[0] if status_lines else "(see screenshot)",
                   details=clean_text("\n".join(status_lines) or text), screenshot=shot)

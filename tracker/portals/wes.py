@@ -121,7 +121,7 @@ def check(page: Page, email: str, password: str, who: str) -> Result:
     status = _stage(steps)
     if steps and not status:
         # Keep the layout of an unrecognised tracker so the reader can be tuned.
-        DEBUG_FILE.parent.mkdir(exist_ok=True)
+        DEBUG_FILE.parent.mkdir(parents=True, exist_ok=True)
         DEBUG_FILE.write_text(json.dumps(steps, indent=2), encoding="utf-8")
 
     ref = REF_RE.search(text)

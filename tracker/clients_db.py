@@ -54,7 +54,7 @@ _REF_PATTERNS = {"wes": EMAIL_RE, "bls": BLS_REF_RE, "vfs": VFS_REF_RE,
 def _connect() -> Iterator[sqlite3.Connection]:
     """Open the database, commit on success, and always close it again
     (several office PCs may save at the same moment)."""
-    DB_FILE.parent.mkdir(exist_ok=True)
+    DB_FILE.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB_FILE, timeout=15)
     con.row_factory = sqlite3.Row
     try:
