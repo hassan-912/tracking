@@ -229,8 +229,17 @@ def main() -> None:
     while True:
         try:
             answer = call("/api/agent/claim", {"host": host})
-            if answer.get("job"):
-                Run(answer["job"], answer.get("clients", [])).go()
+            job = answer.get("job")
+            if job:
+                from tracker.clients_db import CATEGORIES
+                if job.get("category") not in CATEGORIES:
+                    # The website has a category this PC's copy of the program doesn't know yet.
+                    msg = (f"This office PC ({host}) has an old copy of the program: it doesn't know "
+                           f"'{job.get('category')}'. Update it (run the setup line again), then press Check.")
+                    call(f"/api/agent/jobs/{job['id']}", {"state": "failed", "error": msg})
+                    print(f"✖ {msg}")
+                    continue
+                Run(job, answer.get("clients", [])).go()
                 continue
         except Exception as exc:
             print(f"(website not reachable: {str(exc)[:120]} — retrying)")
